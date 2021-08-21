@@ -1,6 +1,5 @@
 import yaml
 import random
-from secrets import SystemRandom
 from multiprocess import Lock, Manager, Process
 
 BACKUP_FILE = "codebro.yaml"
@@ -19,13 +18,11 @@ class Markov():
             return yaml.load(infile.read(), Loader=yaml.Loader)
 
     def generate_markov_text(self, words: list, cache: dict, seed_phrase=None):
-        w1, w2 = "<START>", ""
         if seed_phrase:
-            w1, w2 = seed_phrase[0], seed_phrase[1]
+            w1, w2 = seed_phrase[:2]
         else:
-            urandom = SystemRandom()
             valid_starts = [(x[0], x[1]) for x in cache.keys() if x[0] == "<START>"]
-            w1, w2 = valid_starts[urandom.randint(0, len(valid_starts) - 1)]
+            w1, w2 = random.choice(valid_starts)
 
         gen_words = []
         while True:
@@ -59,11 +56,11 @@ class Markov():
         # strip, uppercase, and check for inclusion in IGNORE_WORDS list
         is_ignored = lambda x: x.strip("\'\"!@#$%^&*().,/\\+=<>?:;").upper() in IGNORE_WORDS
         tokens = [x for x in tokens if not is_ignored(x)]
-        if len(tokens) == 0:
+        if not tokens:
             return  # nothing to learn here!
 
-        tokens[len(tokens) - 1] = tokens[len(tokens) - 1].strip(".?!")
-        tokens = [u"<START>"] + tokens + [u"<STOP>"]
+        tokens[-1] = tokens[-1].strip(".?!")
+        tokens = [u"<START>", *tokens, u"<STOP>"]
         indexes_with_stops = [tokens.index(x) for x in tokens if x.strip(".?!") != x]
         for i in indexes_with_stops[::-1]:
             tokens[i] = tokens[i].strip(".?!")
@@ -76,41 +73,25 @@ class Markov():
         # there must be a better way to serialize from the proxy ..
         local_words = [word for word in self.words]
         with open('codebro.yaml', 'w') as outfile:
-            lk.acquire()
-            outfile.write(yaml.dump(local_words, default_flow_style=True))
-            lk.release()
+            with lk:
+                outfile.write(yaml.dump(local_words, default_flow_style=True))
 
     def create_response(self, prompt="", learn=False):
-        prompt_tokens = prompt.split()
-
         # set seedword from somewhere in words if there's no prompt
-        if len(prompt_tokens) < 1:
-            seed = random.randint(0, len(self.words)-1)
-            prompt_tokens.append(self.words[seed])
+        prompt_tokens = prompt.split() or [random.choice(self.words)]
 
         # create a set of lookups for phrases that start with words
         # contained in prompt phrase
-        seed_tuples = []
-        for i in range(0, len(prompt_tokens)-2):
-            seed_phrase = ("<START>", prompt_tokens[i])
-            seed_tuples.append(seed_phrase)
+        seed_tuples = [("<START>", tok) for tok in prompt_tokens[:-2]]
 
         # lookup seeds in cache; compile a list of 'hits'
-        seed_phrase = None
-        valid_seeds = []
-        for seed in seed_tuples:
-            if seed in self.cache:
-                valid_seeds.append(seed)
+        valid_seeds = [seed for seed in seed_tuples if seed in self.cache]
 
         # either seed the lookup with a randomly selected valid seed,
         # or if there were no 'hits' generate with no seedphrase
-        if len(valid_seeds) > 0:
-            seed_phrase = valid_seeds[random.randrange(0, len(valid_seeds), 1)]
-            response = self.generate_markov_text(self.words, self.cache, seed_phrase)
-        else:
-            response = self.generate_markov_text(self.words, self.cache)
+        seed_phrase = random.choice(valid_seeds) if valid_seeds else None
+        response = self.generate_markov_text(self.words, self.cache, seed_phrase)
 
         if learn:
-            p = Process(target=self.learn, args=(prompt,))
-            p.start()
+            Process(target=self.learn, args=(prompt,)).start()
         return response
