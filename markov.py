@@ -23,29 +23,24 @@ class Markov:
         with open(source_file, 'r') as infile:
             return yaml.load(infile.read(), Loader=yaml.Loader)
 
-    def generate_markov_text(self, seed=None):
-        if seed:
-            w1 = seed
-        else:
-            w1 = random.choice(self.cache[START])
-        w2 = random.choice(self.cache[w1])
-
-        gen_words = [w1]
-        while True:
-            if w2 == STOP:
-                break
-            w1, w2 = w2, random.choice(self.cache[(w1, w2)])
-            gen_words.append(w1)
-
-        message = ' '.join(gen_words)
-        return message
-
     @classmethod
     def triples(cls, words):
         if len(words) < 3:
             return
         for i in range(len(words) - 2):
             yield (words[i], words[i+1], words[i+2])
+
+    @classmethod
+    def tokenize(cls, words: list):
+        yield START
+        for w in words:
+            if any(c in w for c in ('.', '?', '!')):
+                yield STOP
+                yield w.strip(".?!")
+                yield START
+            else:
+                yield w
+        yield STOP
 
     def update_cache(self):
         db = {START: set()}
@@ -60,18 +55,6 @@ class Markov:
                     next_word_is_start = False
                 db.setdefault((w1, w2), set()).add(w3)
         self.cache = {key: list(val) for key, val in db.items()}
-
-    @classmethod
-    def tokenize(cls, words: list):
-        yield START
-        for w in words:
-            if any(c in w for c in ('.', '?', '!')):
-                yield STOP
-                yield w.strip(".?!")
-                yield START
-            else:
-                yield w
-        yield STOP
 
     def learn(self, sentence: str):
         words = sentence.split()
@@ -93,6 +76,23 @@ class Markov:
             outfile.write(yaml.dump(list(self.words), default_flow_style=True))
             if not self.skip_mp:
                 lk.release()
+
+    def generate_markov_text(self, seed=None):
+        if seed:
+            w1 = seed
+        else:
+            w1 = random.choice(self.cache[START])
+        w2 = random.choice(self.cache[w1])
+
+        gen_words = [w1]
+        while True:
+            if w2 == STOP:
+                break
+            w1, w2 = w2, random.choice(self.cache[(w1, w2)])
+            gen_words.append(w1)
+
+        message = ' '.join(gen_words)
+        return message
 
     def create_response(self, prompt="", learn=False):
         # set seedword from somewhere in words if there's no prompt
