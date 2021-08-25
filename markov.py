@@ -30,8 +30,14 @@ class Markov:
         for i in range(len(words) - 2):
             yield (words[i], words[i+1], words[i+2])
 
-    @classmethod
-    def tokenize(cls, words: list):
+    def _ignore(self, word: str):
+        word.strip("\'\"!@#$%^&*().,/\\+=<>?:;").upper() in self.ignore_words
+
+    def tokenize(self, sentence: str):
+        words = [w for w in sentence.split() if not self._ignore(w)]
+        if not words:
+            return
+
         yield START
         for w in words:
             if any(c in w for c in ('.', '?', '!')):
@@ -42,31 +48,36 @@ class Markov:
                 yield w
         yield STOP
 
-    def update_cache(self):
-        db = {START: set()}
-        next_word_is_start = True
-        for w1, w2, w3 in self.triples(self.words):
+    def update_cache(self, new_sentence = None): 
+        if new_sentence:
+            db = self.cache
+            words = list(self.tokenize(new_sentence))
+        else:
+            db = {START: []}
+            words = self.words
+
+        start_of_chain = True
+        for w1, w2, w3 in self.triples(words):
             if w1 in (START, STOP) or w2 in (START, STOP) or w3 == START:
-                next_word_is_start = True
+                start_of_chain = True
             else:
-                if next_word_is_start:
-                    db[START].add(w1)
-                    db.setdefault(w1, set()).add(w2)
-                    next_word_is_start = False
-                db.setdefault((w1, w2), set()).add(w3)
-        self.cache = {key: list(val) for key, val in db.items()}
+                if start_of_chain:
+                    if w1 not in db[START]:
+                        db[START].append(w1)
+                    next_words = db.setdefault(w1, [])
+                    if w2 not in next_words:
+                        next_words.append(w2)
+                    start_of_chain = False
+                next_words = db.setdefault((w1, w2), [])
+                if w3 not in next_words:
+                    next_words.append(w3)
+        self.cache = db
 
-    def learn(self, sentence: str):
-        words = sentence.split()
-
-        # strip, uppercase, and check for inclusion in IGNORE_WORDS list
-        is_ignored = lambda x: x.strip("\'\"!@#$%^&*().,/\\+=<>?:;").upper() in self.ignore_words
-        words = [x for x in words if not is_ignored(x)]
-        if not words:
-            return  # nothing to learn here!
-
-        self.words += list(self.tokenize(words))
-        self.update_cache()
+    def update_corpus(self, sentence: str):
+        new_words = list(self.tokenize(sentence))
+        if not new_words:
+            return
+        self.words += new_words
         lk = None
         if not self.skip_mp:
             lk = Lock()
@@ -102,7 +113,8 @@ class Markov:
         response = self.generate_markov_text(seed_word)
         if learn:
             if self.skip_mp:
-                self.learn(prompt)
+                self.update_corpus(prompt)
             else:
-                Process(target=self.learn, args=(prompt,)).start()
+                Process(target=self.update_corpus, args=(prompt,)).start()
+            self.update_cache(prompt)
         return response
