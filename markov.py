@@ -51,7 +51,7 @@ class Markov:
         db = {START: set()}
         next_word_is_start = True
         for w1, w2, w3 in self.triples(self.words):
-            if w1 in (START, STOP) or w2 in (START, STOP):
+            if w1 in (START, STOP) or w2 in (START, STOP) or w3 == START:
                 next_word_is_start = True
             else:
                 if next_word_is_start:
@@ -97,7 +97,7 @@ class Markov:
     def create_response(self, prompt="", learn=False):
         # set seedword from somewhere in words if there's no prompt
         prompt_tokens = prompt.split()
-        valid_seeds = [tok for tok in prompt_tokens[:-2] if tok in self.cache[START]]
+        valid_seeds = [tok for tok in prompt_tokens[:-2] if tok in self.cache and tok != START]
         seed_word = random.choice(valid_seeds) if valid_seeds else None
         response = self.generate_markov_text(seed_word)
         if learn:
