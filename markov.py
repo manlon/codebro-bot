@@ -2,6 +2,8 @@ import yaml
 import random
 from multiprocess import Lock, Manager, Process
 
+START = "<START>"
+STOP = "<STOP>"
 
 # instantiate a Markov object with the source file
 class Markov:
@@ -9,32 +11,30 @@ class Markov:
         self.brain_file = brain_file
         self.ignore_words = ignore_words
         self.skip_mp = skip_mp
-        if not self.skip_mp:
+        if self.skip_mp:
+            self.words = list(self.load_corpus(brain_file))
+        else:
             self.manager = Manager()
             self.words = self.manager.list(self.load_corpus(brain_file))
-            self.cache = self.manager.dict(self.database(self.words, {}))
-        else:
-            self.words = list(self.load_corpus(brain_file))
-            self.cache = dict(self.database(self.words, {}))
+        self.update_cache()
 
     @classmethod
     def load_corpus(cls, source_file: str):
         with open(source_file, 'r') as infile:
             return yaml.load(infile.read(), Loader=yaml.Loader)
 
-    @classmethod
-    def generate_markov_text(cls, words: list, cache: dict, seed_phrase=None):
-        if seed_phrase:
-            w1, w2 = seed_phrase[:2]
+    def generate_markov_text(self, seed=None):
+        if seed:
+            w1 = seed
         else:
-            valid_starts = [(x[0], x[1]) for x in cache.keys() if x[0] == "<START>"]
-            w1, w2 = random.choice(valid_starts)
+            w1 = random.choice(self.cache[START])
+        w2 = random.choice(self.cache[w1])
 
-        gen_words = []
+        gen_words = [w1]
         while True:
-            if w2 == "<STOP>":
+            if w2 == STOP:
                 break
-            w1, w2 = w2, random.choice(cache[(w1, w2)])
+            w1, w2 = w2, random.choice(self.cache[(w1, w2)])
             gen_words.append(w1)
 
         message = ' '.join(gen_words)
@@ -47,67 +47,62 @@ class Markov:
         for i in range(len(words) - 2):
             yield (words[i], words[i+1], words[i+2])
 
-    def database(self, words: list, cache: dict):
-        for w1, w2, w3 in self.triples(words):
-            key = (w1, w2)
-            if key in cache:
-                if not (w3 in cache[key]):
-                    cache[key].append(w3)
+    def update_cache(self):
+        db = {START: set()}
+        next_word_is_start = True
+        for w1, w2, w3 in self.triples(self.words):
+            if w1 in (START, STOP) or w2 in (START, STOP):
+                next_word_is_start = True
             else:
-                cache[key] = [w3]
-        return cache
+                if next_word_is_start:
+                    db[START].add(w1)
+                    db.setdefault(w1, set()).add(w2)
+                    next_word_is_start = False
+                db.setdefault((w1, w2), set()).add(w3)
+        self.cache = {key: list(val) for key, val in db.items()}
+
+    @classmethod
+    def tokenize(cls, words: list):
+        yield START
+        for w in words:
+            if any(c in w for c in ('.', '?', '!')):
+                yield STOP
+                yield w.strip(".?!")
+                yield START
+            else:
+                yield w
+        yield STOP
 
     def learn(self, sentence: str):
-        tokens = sentence.split()
+        words = sentence.split()
 
         # strip, uppercase, and check for inclusion in IGNORE_WORDS list
         is_ignored = lambda x: x.strip("\'\"!@#$%^&*().,/\\+=<>?:;").upper() in self.ignore_words
-        tokens = [x for x in tokens if not is_ignored(x)]
-        if not tokens:
+        words = [x for x in words if not is_ignored(x)]
+        if not words:
             return  # nothing to learn here!
 
-        tokens[-1] = tokens[-1].strip(".?!")
-        tokens = [u"<START>", *tokens, u"<STOP>"]
-        indexes_with_stops = [tokens.index(x) for x in tokens if x.strip(".?!") != x]
-        for i in indexes_with_stops[::-1]:
-            tokens[i] = tokens[i].strip(".?!")
-            tokens.insert(i + 1, u"<STOP>")
-            tokens.insert(i + 2, u"<START>")
-
-        self.words += tokens
-        self.cache = self.database(self.words, {})
+        self.words += list(self.tokenize(words))
+        self.update_cache()
         lk = None
         if not self.skip_mp:
             lk = Lock()
-        # there must be a better way to serialize from the proxy ..
-        local_words = [word for word in self.words]
         with open(self.brain_file, 'w') as outfile:
             if not self.skip_mp:
                 lk.acquire()
-            outfile.write(yaml.dump(local_words, default_flow_style=True))
+            outfile.write(yaml.dump(list(self.words), default_flow_style=True))
             if not self.skip_mp:
                 lk.release()
 
     def create_response(self, prompt="", learn=False):
         # set seedword from somewhere in words if there's no prompt
-        prompt_tokens = prompt.split() or [random.choice(self.words)]
-
-        # create a set of lookups for phrases that start with words
-        # contained in prompt phrase
-        seed_tuples = [("<START>", tok) for tok in prompt_tokens[:-2]]
-
-        # lookup seeds in cache; compile a list of 'hits'
-        valid_seeds = [seed for seed in seed_tuples if seed in self.cache]
-
-        # either seed the lookup with a randomly selected valid seed,
-        # or if there were no 'hits' generate with no seedphrase
-        seed_phrase = random.choice(valid_seeds) if valid_seeds else None
-        response = self.generate_markov_text(self.words, self.cache, seed_phrase)
-
+        prompt_tokens = prompt.split()
+        valid_seeds = [tok for tok in prompt_tokens[:-2] if tok in self.cache[START]]
+        seed_word = random.choice(valid_seeds) if valid_seeds else None
+        response = self.generate_markov_text(seed_word)
         if learn:
-            if not self.skip_mp:
-                p = Process(target=self.learn, args=(prompt,))
-                p.start()
-            else:
+            if self.skip_mp:
                 self.learn(prompt)
+            else:
+                Process(target=self.learn, args=(prompt,)).start()
         return response
