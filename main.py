@@ -32,15 +32,15 @@ parser.add_argument('--slack_app_token',
 parser.add_argument('-b', '--brain',
                     env_var="CB_BRAIN",
                     required=True,
-                    help="This bot's brain as a YAML file.")
+                    help="This bot's input brain as a YAML or newline-delimited text file.")
+parser.add_argument('-o', '--output',
+                    env_var="CB_OUTPUT",
+                    required=True,
+                    help="File for writing the updated corpus")
 parser.add_argument('-n', '--name',
                     env_var="CB_NAME",
                     required=True,
                     help="The name this bot will respond to in chats.")
-parser.add_argument('--skip_mp',
-                    env_var="CB_SKIP_MP",
-                    action="store_true",
-                    help="Skip the multiprocess stuff that can hinder debugging.")
 args = parser.parse_args()
 
 discord_token = args.discord_token
@@ -48,7 +48,7 @@ slack_bot_token = args.slack_bot_token
 slack_app_token = args.slack_app_token
 
 bot_name = args.name
-brain = Markov(args.brain, bot_name.upper(), args.skip_mp)
+brain = Markov(args.brain, args.output, [bot_name])
 
 discord_client = discord.Client()
 
