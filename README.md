@@ -18,7 +18,7 @@ Find "Socket Mode" in the left-hand Settings menu. Enable socket mode. This will
 
 ### **Add a bot token scope**:
 
-Before we can install the app to a workspace and get our bot token, we need to add a bot token OAuth scope. Find "OAuth & Permissions" in the left-hand Features menu. Scroll down to "Scopes" and add scope "channels:read". Now the app has permission to view basic information about public channels in a workspace.
+Before we can install the app to a workspace and get our bot token, we need to add a bot token OAuth scope. Find "OAuth & Permissions" in the left-hand Features menu. Scroll down to "Scopes" and add scope "channels:read" and "chat:write". Now the app has permission to view basic information about public channels in a workspace.
 
 ### **Install to Workspace & bot token**:
 
@@ -31,7 +31,6 @@ Find "Event Subscriptions" in the left-hand Features menu. Enable event subscrip
     - message:im
     - message:groups
     - message:channels
-    - chat:write
 
 Save your changes. You should see a prompt to reinstall your app. Go ahead and reinstall.
 

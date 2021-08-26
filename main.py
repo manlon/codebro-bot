@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import shutil
 
 import configargparse
 import discord
@@ -13,6 +14,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.socket_mode.request import SocketModeRequest
 
 from markov import Markov
+from time import time
 
 logging.basicConfig(level=logging.INFO)
 
@@ -41,6 +43,11 @@ parser.add_argument('-n', '--name',
                     env_var="CB_NAME",
                     required=True,
                     help="The name this bot will respond to in chats.")
+parser.add_argument('-r', '--rotate',
+                    env_var="CB_ROTATE",
+                    required=False,
+                    action='store_true',
+                    help="Backup the brain and copy the output to the brain on SIGTERM.")
 args = parser.parse_args()
 
 discord_token = args.discord_token
@@ -51,6 +58,11 @@ bot_name = args.name
 brain = Markov(args.brain, args.output, [bot_name])
 
 discord_client = discord.Client()
+
+def rotate_brain(brain: str, output: str):
+    brain_backup = '{}.{}'.format(brain, time())
+    shutil.move(brain, brain_backup)
+    shutil.move(output, brain)
 
 
 def sanitize_and_tokenize(msg: str) -> list:
@@ -115,7 +127,13 @@ slack_client = SocketModeClient(
 
 slack_client.socket_mode_request_listeners.append(process)
 
-basic_loop = asyncio.get_event_loop()
-basic_loop.create_task(slack_client.connect())
-basic_loop.create_task(discord_client.start(discord_token)),
-basic_loop.run_forever()
+try:
+    basic_loop = asyncio.get_event_loop()
+    basic_loop.create_task(slack_client.connect())
+    basic_loop.create_task(discord_client.start(discord_token)),
+    basic_loop.run_forever()
+except KeyboardInterrupt:
+    if args.rotate:
+        rotate_brain(args.brain, args.output)
+finally:
+    basic_loop.close()
