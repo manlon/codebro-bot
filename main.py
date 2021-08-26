@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import shutil
+import socket
 
 import configargparse
 import discord
@@ -31,6 +32,9 @@ parser.add_argument('--slack_bot_token',
 parser.add_argument('--slack_app_token',
                     env_var="CB_SLACK_APP_TOKEN",
                     help="This bot's slack app token.")
+parser.add_argument('--local_server_port',
+                    type=int,
+                    help='Set a local listen port to enable a local server')
 parser.add_argument('-b', '--brain',
                     env_var="CB_BRAIN",
                     required=True,
@@ -59,12 +63,13 @@ brain = Markov(args.brain, args.output, [bot_name])
 
 discord_client = discord.Client()
 
+
 def rotate_brain(brain: str, output: str):
     brain_backup = '{}.{}'.format(brain, time())
     shutil.move(brain, brain_backup)
     shutil.move(output, brain)
 
-
+    
 def sanitize_and_tokenize(msg: str) -> list:
     msg_tokens = msg.split()
     for i in range(0, len(msg_tokens)):
@@ -119,15 +124,44 @@ async def process(client: SocketModeClient, req: SocketModeRequest):
                     channel=req.payload["event"]["channel"],
                     text=response
                 )
-
+                
+                
+# TODO: the local server should probably be a class and should probably be 
+# multi-threaded to handle simultaneous connections ... but this is expedient
+# for quick local testing without Slack/Discord integration
+#
+# this will listen on a local server, if a port is specified.
+# try connecting with netcat or something, like nc localhost <your port> 
+def run_local_server(port_num):
+HOST = 'localhost'
+PORT = args.local_server_port
+PROMPT="\nFeed Me: "
+print("Listening on port: " + str(PORT))
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((HOST, PORT))
+    s.listen(1)
+    conn, addr = s.accept()
+    with conn:
+        print('Connected by', addr)
+        while True:
+            conn.sendall(str.encode(PROMPT))
+            data = conn.recv(1024)
+            if not data: break
+            decoded_data = data.decode('utf-8')
+            response = create_raw_response(decoded_data)
+            if response: conn.sendall(str.encode(response))
 slack_client = SocketModeClient(
     app_token=slack_app_token,
     web_client=AsyncWebClient(token=slack_bot_token)
 )
-
 slack_client.socket_mode_request_listeners.append(process)
 
+
+# MAIN ---- 
 try:
+    if args.local_server_port:
+        run_local_server(port_num=args.local_server_port)
     basic_loop = asyncio.get_event_loop()
     basic_loop.create_task(slack_client.connect())
     basic_loop.create_task(discord_client.start(discord_token)),
